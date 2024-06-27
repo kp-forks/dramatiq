@@ -24,7 +24,6 @@ def started_thread():
     set_event_loop_thread(thread)
     yield thread
     thread.stop()
-    thread.join()
     set_event_loop_thread(None)
 
 
@@ -41,10 +40,14 @@ def test_event_loop_thread_start():
 
 def test_event_loop_thread_start_timeout():
     thread = EventLoopThread(logger=get_logger(__name__))
-    thread.loop = mock.Mock()
-    thread.loop.run_forever.side_effect = RuntimeError("fail")
-    with pytest.raises(RuntimeError):
+    loop_mock = mock.Mock()
+    # Store the original thread loop and replace it with a mock.
+    original_loop = thread.loop
+    thread.loop = loop_mock
+    with pytest.raises(RuntimeError, match="Event loop failed to start"):
         thread.start(timeout=0.1)
+    # Close the original event loop to prevent a ResourceWarning.
+    original_loop.close()
 
 
 def test_event_loop_thread_run_coroutine(started_thread: EventLoopThread):
@@ -132,8 +135,11 @@ def test_async_to_sync(get_event_loop_thread_mocked):
     set_event_loop_thread(thread)
     fn = async_to_sync(async_fn)
     actual = fn(2)
-    thread.run_coroutine.assert_called_once()
-    assert actual is thread.run_coroutine()
+    try:
+        thread.run_coroutine.assert_called_once()
+        assert actual is thread.run_coroutine.return_value
+    finally:
+        set_event_loop_thread(None)
 
 
 def test_async_to_sync_with_actual_thread(started_thread):
